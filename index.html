@@ -1,1 +1,353 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Подарок для Даши</title>
+<!--
+=====================================================================
+  КАК ЭТО РАБОТАЕТ
+=====================================================================
+  Сайт спрашивает «Вы Даша?». Если «Да» — показывает подарки
+  (видео/фото + название + описание). Пока загрузить подарок может любой,
+  кто открыл сайт, и все подарки видны всем.
 
+  ВАЖНО: чтобы подарки видели ВСЕ, им нужно общее хранилище.
+  Обычная страница на GitHub Pages сама ничего хранить не умеет.
+  Бесплатный вариант — Supabase (supabase.com):
+
+  1) Создай проект в Supabase.
+  2) Открой SQL Editor и выполни это целиком:
+
+     create table gifts (
+       id uuid primary key default gen_random_uuid(),
+       created_at timestamptz default now(),
+       title text, description text, file_url text, file_type text,
+       kind text default 'gift'
+     );
+     alter table gifts enable row level security;
+     create policy "gifts read" on gifts for select to anon using (true);
+     create policy "gifts add"  on gifts for insert to anon with check (true);
+     insert into storage.buckets (id, name, public) values ('gifts','gifts',true)
+       on conflict do nothing;
+     create policy "gifts upload" on storage.objects for insert to anon
+       with check (bucket_id = 'gifts');
+     create policy "gifts view" on storage.objects for select to anon
+       using (bucket_id = 'gifts');
+
+  (Если таблицу gifts ты уже создала раньше, добавь колонку так:
+     alter table gifts add column kind text default 'gift'; )
+
+  3) Project Settings → API: скопируй Project URL и anon/publishable key
+     и вставь ниже в CONFIG.
+
+  Пока CONFIG пустой, сайт работает в «локальном режиме»: подарки
+  сохраняются только в этом браузере (удобно, чтобы всё проверить).
+
+  КОГДА ВСЁ ЗАГРУЗИШЬ: поставь ALLOW_PUBLIC_UPLOAD:false — форма загрузки
+  пропадёт у всех. Ты сама сможешь открыть сайт с  ?admin=ТВОЙ_КЛЮЧ
+  в конце адреса, и форма снова появится только у тебя.
+  Чтобы закрыть загрузку и на стороне Supabase, потом удалим политики
+  "gifts add" и "gifts upload".
+=====================================================================
+-->
+<style>
+:root{
+  --pink:#ff6fa5;--pink2:#ff9ec4;--rose:#ffe3ee;--gold:#ffc857;--ink:#4a2740;--ink2:#8a5a7a;
+  --card:#ffffffd9;--shadow:0 10px 30px rgba(180,60,110,.18);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;min-height:100%}
+body{
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);
+  background:radial-gradient(circle at 15% 10%,#fff1f7 0,transparent 45%),radial-gradient(circle at 90% 20%,#ffe9c9 0,transparent 40%),linear-gradient(#ffd9e8,#ffeef5 55%,#fff7ea);
+  background-attachment:fixed;min-height:100dvh;overflow-x:hidden;
+  padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+}
+.float{position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:0}
+.float span{position:absolute;bottom:-40px;font-size:22px;opacity:.55;animation:up linear infinite}
+@keyframes up{to{transform:translateY(-110vh) rotate(25deg);opacity:0}}
+main{position:relative;z-index:1;max-width:560px;margin:0 auto;padding:18px 16px 60px}
+.screen{display:none;animation:fade .5s ease}
+.screen.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+/* вопрос */
+#gate{min-height:calc(100dvh - 40px);display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+#gate.on{display:flex}
+.box{font-size:96px;line-height:1;animation:bob 2.2s ease-in-out infinite;filter:drop-shadow(0 10px 14px rgba(200,60,110,.3))}
+@keyframes bob{50%{transform:translateY(-12px) rotate(-3deg)}}
+h1{font-size:34px;margin:14px 0 4px;font-weight:800}
+.sub{color:var(--ink2);margin:0 0 26px;font-size:16px}
+.row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn{border:0;border-radius:999px;padding:14px 30px;font:700 18px system-ui,sans-serif;color:#fff;background:linear-gradient(135deg,var(--pink),#ff8a6f);box-shadow:var(--shadow);cursor:pointer}
+.btn:active{transform:scale(.96)}
+.btn.ghost{background:#fff;color:var(--ink);box-shadow:0 4px 14px rgba(0,0,0,.1)}
+.btn.small{padding:10px 20px;font-size:15px}
+.btn[disabled]{opacity:.55}
+
+/* шапка */
+header{text-align:center;padding:12px 0 6px}
+header .box{font-size:58px}
+header h1{font-size:30px}
+/* карточки */
+.gift{background:var(--card);border-radius:22px;box-shadow:var(--shadow);overflow:hidden;margin:18px 0;backdrop-filter:blur(6px);animation:fade .6s ease}
+.gift .media{background:#1b0f1a;display:block;width:100%;max-height:70vh}
+.gift video.media,.gift img.media{object-fit:contain}
+.gift .txt{padding:14px 18px 18px}
+.gift h2{margin:0 0 6px;font-size:21px}
+.gift p{margin:0;white-space:pre-wrap;color:#5d3a52;line-height:1.45;font-size:16px}
+.gift time{display:block;margin-top:10px;font-size:12px;color:var(--ink2)}
+.sec{margin:26px 4px 0;font-size:20px;font-weight:800}
+.gift.dance{border:3px solid var(--gold);box-shadow:0 0 0 6px rgba(255,200,87,.25),var(--shadow)}
+.gift.dance h2:before{content:"💃 "}
+.empty{text-align:center;color:var(--ink2);padding:40px 10px;font-size:17px}
+/* загрузка */
+.up{background:var(--card);border:2px dashed var(--pink2);border-radius:22px;padding:16px 18px;margin:20px 0;box-shadow:var(--shadow)}
+.up h3{margin:0 0 10px;font-size:18px}
+.up label{display:block;font-size:13px;color:var(--ink2);margin:10px 0 4px}
+.up input[type=text],.up textarea{width:100%;border:1.5px solid #f3bcd3;border-radius:12px;padding:11px 12px;font:16px system-ui,sans-serif;background:#fff;color:var(--ink)}
+.up textarea{min-height:90px;resize:vertical}
+.file{display:flex;align-items:center;gap:10px;margin-top:6px}
+.file span{font-size:14px;color:var(--ink2);word-break:break-all}
+.bar{height:10px;border-radius:6px;background:#f6d5e3;overflow:hidden;margin-top:12px;display:none}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--pink),var(--gold));transition:width .15s}
+.msg{margin-top:10px;font-size:14px;min-height:18px}
+.msg.err{color:#c0123f}.msg.ok{color:#1b8a4a}
+.warn{background:#fff6d9;border:1px solid #f3d98a;color:#7a5b00;border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.4;margin-bottom:10px}
+.hint{font-size:12px;color:var(--ink2);margin-top:8px}
+#no p{font-size:18px;color:var(--ink2);margin:6px 0 24px;max-width:320px}
+</style>
+</head>
+<body>
+<div class="float" id="float"></div>
+<main>
+
+  <!-- 1. Вы Даша? -->
+  <section id="gate" class="screen on">
+    <div class="box">🎁</div>
+    <h1>Вы Даша?</h1>
+    <p class="sub">Здесь спрятан подарок</p>
+    <div class="row">
+      <button class="btn" id="yes">Да, это я</button>
+      <button class="btn ghost" id="nope">Нет</button>
+    </div>
+  </section>
+
+  <!-- 2. Не Даша -->
+  <section id="no" class="screen" style="text-align:center;padding-top:20vh">
+    <div class="box">🤫</div>
+    <h1>Тогда это не для вас</h1>
+    <p style="margin-left:auto;margin-right:auto">Этот подарок ждёт только Дашу. Если встретите её, передайте, что для неё есть сюрприз.</p>
+    <button class="btn ghost" id="back">Назад</button>
+  </section>
+
+  <!-- 3. Подарки -->
+  <section id="gifts" class="screen">
+    <header>
+      <div class="box">🎁</div>
+      <h1>Подарки для Даши</h1>
+      <p class="sub" style="margin-bottom:6px">Тут всё, что для тебя приготовили 💝</p>
+    </header>
+
+    <div class="up" id="upbox" style="display:none">
+      <h3>➕ Добавить подарок</h3>
+      <div class="warn" id="localwarn" style="display:none">
+        Сейчас сайт сохраняет подарки только в этом браузере, другие их не увидят.
+        Чтобы подарки были видны всем, подключи общее хранилище (инструкция в самом начале файла).
+      </div>
+      <label for="k">Что загружаем</label>
+      <select id="k" style="width:100%;border:1.5px solid #f3bcd3;border-radius:12px;padding:11px 12px;font:16px system-ui,sans-serif;background:#fff;color:#4a2740">
+        <option value="gift">🎁 Подарок</option>
+        <option value="dance">💃 Поздравительный танец (видео)</option>
+      </select>
+      <label for="t">Название</label>
+      <input type="text" id="t" maxlength="120" placeholder="Например: Видео от мамы">
+      <label for="d">Описание подарка</label>
+      <textarea id="d" maxlength="2000" placeholder="Что это за подарок, от кого, что хочется сказать…"></textarea>
+      <label>Видео или фото</label>
+      <div class="file">
+        <button class="btn small ghost" id="pick" type="button">Выбрать файл</button>
+        <span id="fname">файл не выбран</span>
+      </div>
+      <input type="file" id="f" accept="video/*,image/*" style="display:none">
+      <div class="bar" id="bar"><i></i></div>
+      <div class="msg" id="msg"></div>
+      <div class="row" style="justify-content:flex-start;margin-top:10px">
+        <button class="btn small" id="send" type="button">Добавить подарок</button>
+      </div>
+      <div class="hint" id="limit"></div>
+    </div>
+
+    <div id="list"></div>
+  </section>
+
+</main>
+
+<script>
+/* ===================== НАСТРОЙКИ ===================== */
+const CONFIG={
+  SUPABASE_URL:'',            // например: https://abcdxyz.supabase.co
+  SUPABASE_KEY:'',            // anon / publishable key из Project Settings → API
+  BUCKET:'gifts',
+  ALLOW_PUBLIC_UPLOAD:true,   // потом поставь false, и загрузка пропадёт у всех
+  ADMIN_KEY:'dasha-admin',    // с ?admin=dasha-admin в адресе форма загрузки видна и при false
+  MAX_MB:50                   // лимит бесплатного Supabase на один файл
+};
+/* ===================================================== */
+
+const $=id=>document.getElementById(id);
+const REMOTE=!!(CONFIG.SUPABASE_URL&&CONFIG.SUPABASE_KEY);
+const isAdmin=new URLSearchParams(location.search).get('admin')===CONFIG.ADMIN_KEY;
+const canUpload=CONFIG.ALLOW_PUBLIC_UPLOAD||isAdmin;
+
+/* летающие сердечки на фоне */
+(()=>{const f=$('float'),em=['💗','✨','💖','🌸','🎀','⭐'];
+  for(let i=0;i<14;i++){const s=document.createElement('span');s.textContent=em[i%em.length];
+    s.style.left=Math.random()*100+'%';s.style.fontSize=(16+Math.random()*18)+'px';
+    s.style.animationDuration=(9+Math.random()*10)+'s';s.style.animationDelay=(-Math.random()*14)+'s';f.append(s)}})();
+
+/* экраны */
+const show=id=>{document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('on',s.id===id))};
+$('yes').onclick=()=>{sessionStorage.setItem('dasha','1');enter()};
+$('nope').onclick=()=>show('no');
+$('back').onclick=()=>show('gate');
+function enter(){show('gifts');confetti();load()}
+
+function confetti(){
+  const em=['🎉','💖','✨','🎁','🌸','⭐'];
+  for(let i=0;i<26;i++){
+    const s=document.createElement('span');s.textContent=em[i%em.length];
+    s.style.cssText='position:fixed;left:'+(Math.random()*100)+'vw;top:-30px;font-size:'+(18+Math.random()*20)+'px;z-index:9;pointer-events:none;transition:transform '+(2+Math.random()*1.8)+'s ease-in,opacity 2.5s;';
+    document.body.append(s);
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{s.style.transform='translate('+(Math.random()*120-60)+'px,'+(innerHeight+80)+'px) rotate('+(Math.random()*540)+'deg)';s.style.opacity='0'}));
+    setTimeout(()=>s.remove(),4200);
+  }
+}
+
+/* ===================== ХРАНИЛИЩЕ ===================== */
+const authHeaders=()=>{
+  const h={apikey:CONFIG.SUPABASE_KEY};
+  if(CONFIG.SUPABASE_KEY.startsWith('eyJ'))h.Authorization='Bearer '+CONFIG.SUPABASE_KEY;
+  return h;
+};
+const uid=()=>(crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2));
+const extOf=n=>{const m=/\.([a-z0-9]{1,6})$/i.exec(n||'');return m?m[1].toLowerCase():'bin'};
+
+/* локальный режим: IndexedDB в этом браузере */
+const idb=()=>new Promise((res,rej)=>{
+  const r=indexedDB.open('dasha-gifts',1);
+  r.onupgradeneeded=()=>r.result.createObjectStore('g',{keyPath:'id'});
+  r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);
+});
+const idbAll=async()=>{const db=await idb();return new Promise((res,rej)=>{const q=db.transaction('g').objectStore('g').getAll();q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)})};
+const idbPut=async v=>{const db=await idb();return new Promise((res,rej)=>{const q=db.transaction('g','readwrite').objectStore('g').put(v);q.onsuccess=()=>res();q.onerror=()=>rej(q.error)})};
+
+async function fetchGifts(){
+  if(!REMOTE){
+    const all=await idbAll();
+    return all.sort((a,b)=>b.created_at.localeCompare(a.created_at)).map(g=>({
+      id:g.id,title:g.title,description:g.description,kind:g.kind||'gift',file_type:g.file_type,created_at:g.created_at,file_url:URL.createObjectURL(g.blob)}));
+  }
+  const r=await fetch(CONFIG.SUPABASE_URL+'/rest/v1/gifts?select=*&order=created_at.desc',{headers:authHeaders()});
+  if(!r.ok)throw new Error('Не удалось загрузить подарки ('+r.status+')');
+  return (await r.json()).map(g=>({...g,kind:g.kind||'gift'}));
+}
+
+function xhrUpload(url,file,onProg){
+  return new Promise((res,rej)=>{
+    const x=new XMLHttpRequest();x.open('POST',url);
+    const h=authHeaders();Object.keys(h).forEach(k=>x.setRequestHeader(k,h[k]));
+    x.setRequestHeader('Content-Type',file.type||'application/octet-stream');x.setRequestHeader('x-upsert','false');
+    x.upload.onprogress=e=>{if(e.lengthComputable)onProg(e.loaded/e.total)};
+    x.onload=()=>x.status>=200&&x.status<300?res():rej(new Error('Загрузка файла не удалась ('+x.status+'): '+(x.responseText||'').slice(0,160)));
+    x.onerror=()=>rej(new Error('Нет связи с хранилищем'));
+    x.send(file);
+  });
+}
+
+async function saveGift({title,description,kind,file},onProg){
+  const created_at=new Date().toISOString(),type=(file.type||'').startsWith('image')?'image':'video';
+  if(!REMOTE){
+    await idbPut({id:uid(),title,description,kind,file_type:type,created_at,blob:file});onProg(1);return;
+  }
+  const path=uid()+'.'+extOf(file.name);
+  await xhrUpload(CONFIG.SUPABASE_URL+'/storage/v1/object/'+CONFIG.BUCKET+'/'+path,file,onProg);
+  const file_url=CONFIG.SUPABASE_URL+'/storage/v1/object/public/'+CONFIG.BUCKET+'/'+path;
+  const r=await fetch(CONFIG.SUPABASE_URL+'/rest/v1/gifts',{method:'POST',headers:{...authHeaders(),'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({title,description,file_url,file_type:type,kind})});
+  if(!r.ok)throw new Error('Не удалось сохранить описание ('+r.status+')');
+}
+
+/* ===================== ИНТЕРФЕЙС ===================== */
+let shownKey=null;
+async function load(force){
+  const list=$('list');
+  try{
+    const gifts=await fetchGifts();
+    const key=gifts.map(g=>g.id).join(',');
+    if(key===shownKey&&!force)return;
+    shownKey=key;render(gifts);
+  }catch(e){
+    if(shownKey===null)list.innerHTML='<div class="empty">Не получилось загрузить подарки.<br><small>'+esc(e.message)+'</small></div>';
+  }
+}
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function card(g){
+  const c=document.createElement('article');c.className='gift'+(g.kind==='dance'?' dance':'');
+  let media;
+  if(g.file_type==='image'){media=document.createElement('img');media.src=g.file_url;media.alt=g.title||'Подарок';media.loading='lazy'}
+  else{media=document.createElement('video');media.src=g.file_url;media.controls=true;media.playsInline=true;media.preload='metadata'}
+  media.className='media';c.append(media);
+  const t=document.createElement('div');t.className='txt';
+  const h=document.createElement('h2');h.textContent=g.title||(g.kind==='dance'?'Поздравительный танец':'Подарок');t.append(h);
+  if(g.description){const p=document.createElement('p');p.textContent=g.description;t.append(p)}
+  const d=document.createElement('time');d.textContent=new Date(g.created_at).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'});t.append(d);
+  c.append(t);return c;
+}
+function render(gifts){
+  const list=$('list');list.innerHTML='';
+  if(!gifts.length){list.innerHTML='<div class="empty">Подарки уже в пути 🎁<br>Скоро здесь появится сюрприз</div>';return}
+  const dances=gifts.filter(g=>g.kind==='dance'),rest=gifts.filter(g=>g.kind!=='dance');
+  if(dances.length){const h=document.createElement('div');h.className='sec';h.textContent='Поздравительный танец';list.append(h);dances.forEach(g=>list.append(card(g)))}
+  if(rest.length){if(dances.length){const h=document.createElement('div');h.className='sec';h.textContent='Подарки';list.append(h)}rest.forEach(g=>list.append(card(g)))}
+}
+
+/* форма загрузки */
+if(canUpload){
+  $('upbox').style.display='block';
+  if(!REMOTE)$('localwarn').style.display='block';
+  $('limit').textContent='Видео или фото, до '+CONFIG.MAX_MB+' МБ. Загруженное сразу видно на сайте.'+(isAdmin&&!CONFIG.ALLOW_PUBLIC_UPLOAD?' (Режим администратора)':'');
+}
+let picked=null;
+$('pick').onclick=()=>$('f').click();
+$('f').onchange=e=>{
+  picked=e.target.files[0]||null;
+  $('fname').textContent=picked?picked.name+' · '+(picked.size/1048576).toFixed(1)+' МБ':'файл не выбран';
+  setMsg('');
+};
+const setMsg=(t,k)=>{const m=$('msg');m.textContent=t;m.className='msg'+(k?' '+k:'')};
+$('send').onclick=async()=>{
+  const kind=$('k').value,description=$('d').value.trim();
+  const title=$('t').value.trim()||(kind==='dance'?'Поздравительный танец':'');
+  if(!title)return setMsg('Напиши название подарка','err');
+  if(!picked)return setMsg('Выбери видео или фото','err');
+  if(picked.size>CONFIG.MAX_MB*1048576)return setMsg('Файл больше '+CONFIG.MAX_MB+' МБ, сожми видео или выбери поменьше','err');
+  const btn=$('send'),bar=$('bar'),fill=bar.firstElementChild;
+  btn.disabled=true;bar.style.display='block';fill.style.width='0';setMsg('Загружаю…');
+  try{
+    await saveGift({title,description,kind,file:picked},p=>{fill.style.width=Math.round(p*100)+'%'});
+    setMsg(kind==='dance'?'Танец добавлен 💃':'Подарок добавлен 🎉','ok');
+    $('t').value='';$('d').value='';$('f').value='';picked=null;$('fname').textContent='файл не выбран';
+    await load(true);
+  }catch(e){setMsg(e.message||'Что-то пошло не так','err')}
+  btn.disabled=false;setTimeout(()=>{bar.style.display='none'},900);
+};
+
+/* если уже отвечала «Да» в этой вкладке — сразу показываем подарки */
+if(sessionStorage.getItem('dasha')==='1')enter();
+
+/* подтягиваем подарки, добавленные другими (только если список изменился) */
+setInterval(()=>{if($('gifts').classList.contains('on')&&!document.hidden)load()},30000);
+</script>
+</body>
+</html>
